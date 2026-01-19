@@ -1,0 +1,320 @@
+/* Download History Styles */
+.download-history {
+  width: 100%;
+  margin-top: 24px;
+  background: linear-gradient(135deg, rgba(52, 41, 79, 0.95) 0%, rgba(42, 33, 65, 0.95) 100%);
+  backdrop-filter: blur(10px);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3),
+              0 4px 8px rgba(14, 10, 27, 0.4),
+              inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, rgba(60, 46, 88, 0.6) 0%, rgba(54, 42, 80, 0.6) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.history-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-btn {
+  background: rgba(60, 46, 88, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #b9bbbe;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-btn:hover {
+  background: rgba(70, 55, 100, 0.8);
+  color: #ffffff;
+}
+
+.filter-btn.active {
+  background: linear-gradient(135deg, var(--hanar-light-purple) 0%, rgb(113, 73, 180) 100%);
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.clear-btn {
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #dc3545;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 8px;
+}
+
+.clear-btn:hover {
+  background: rgba(220, 53, 69, 0.3);
+  color: #ff6b6b;
+}
+
+.history-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(131, 88, 196, 0.5);
+  border-radius: 4px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(131, 88, 196, 0.7);
+}
+
+.history-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: #72767d;
+  font-size: 14px;
+}
+
+.history-loading {
+  text-align: center;
+  padding: 40px 20px;
+  color: #b9bbbe;
+  font-size: 14px;
+}
+
+.history-item {
+  display: flex;
+  background: linear-gradient(135deg, rgba(40, 30, 65, 0.6) 0%, rgba(35, 26, 55, 0.6) 100%);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+.history-item.clickable {
+  cursor: pointer;
+}
+
+.history-item:hover {
+  background: linear-gradient(135deg, rgba(50, 38, 80, 0.7) 0%, rgba(42, 33, 65, 0.7) 100%);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.history-item.clickable:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.history-item:last-child {
+  margin-bottom: 0;
+}
+
+/* Status-specific styles */
+.history-item.status-active {
+  border-color: rgba(131, 88, 196, 0.4);
+  box-shadow: 0 0 20px rgba(131, 88, 196, 0.15);
+}
+
+.history-item.status-completed {
+  border-color: rgba(74, 222, 128, 0.2);
+}
+
+.history-item.status-failed {
+  border-color: rgba(220, 53, 69, 0.2);
+}
+
+.history-thumbnail {
+  position: relative;
+  width: 120px;
+  height: 68px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.history-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.history-status-icon {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: 14px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.history-details {
+  flex: 1;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.history-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #72767d;
+  flex-wrap: wrap;
+}
+
+.history-uploader {
+  color: #b9bbbe;
+}
+
+.history-time {
+  color: #72767d;
+}
+
+.history-size {
+  color: #72767d;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+/* Progress bar for active downloads */
+.history-progress-container {
+  margin-top: 8px;
+}
+
+.history-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(25, 20, 40, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.history-progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, var(--hanar-light-purple), var(--hanar-bright-purple));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.history-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.3),
+    transparent
+  );
+  animation: historyShimmer 1.5s infinite;
+}
+
+@keyframes historyShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.history-progress-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #b9bbbe;
+  margin-top: 4px;
+}
+
+.history-eta,
+.history-speed {
+  color: #72767d;
+}
+
+/* Error message */
+.history-error {
+  font-size: 11px;
+  color: #dc3545;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: rgba(220, 53, 69, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 700px) {
+  .history-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  
+  .history-filters {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .history-thumbnail {
+    width: 100px;
+    height: 56px;
+  }
+  
+  .history-title {
+    font-size: 13px;
+  }
+}

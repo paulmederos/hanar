@@ -60,23 +60,15 @@ These can be changed in the app UI.
 
 ## Batch Conversion Script
 
-For converting existing VP9/AV1 videos to HEVC:
+A standalone PowerShell script (`convert-to-hevc.ps1`) is included for batch converting existing VP9/AV1 videos to HEVC. It uses NVIDIA NVENC for hardware-accelerated encoding.
 
-```powershell
-# Dry run (see what would be converted)
-.\E:\Plex\scripts\convert-for-appletv.ps1 -DryRun
+The script:
+- Scans a folder for videos that need conversion (VP9/AV1)
+- Skips files already in H.264 or HEVC (Apple TV compatible)
+- Backs up originals before converting
+- Logs all operations
 
-# Run conversion with GPU
-.\E:\Plex\scripts\convert-for-appletv.ps1 -Force -UseGPU
-
-# Options
--SourceDir "E:\Plex\YouTube"  # Source folder
--VideoCodec "hevc"            # hevc or h264
--Quality 23                   # 18-28, lower = better
--Preset "p4"                  # p1 (fast) to p7 (quality)
--DeleteOriginals              # Remove originals after conversion
--UseGPU                       # Use NVIDIA NVENC (default: true)
-```
+Edit the paths at the top of the script to match your setup.
 
 ## Tech Stack
 
@@ -90,14 +82,14 @@ For converting existing VP9/AV1 videos to HEVC:
 ```
 hanar/
 ├── electron/
-│   ├── main.ts       # Electron main process, download logic
-│   ├── preload.ts    # IPC bridge
-│   └── store.ts      # Settings persistence
+│   ├── main.ts          # Electron main process, download logic
+│   ├── preload.ts       # IPC bridge
+│   └── store.ts         # Settings persistence
 ├── src/
-│   ├── App.tsx       # React UI
-│   └── App.css       # Styles
-└── E:\Plex\scripts\
-    └── convert-for-appletv.ps1  # Batch conversion script
+│   ├── App.tsx          # React UI
+│   ├── App.css          # Styles
+│   └── components/      # UI components (Sidebar, DownloadHistory)
+└── convert-to-hevc.ps1  # Standalone batch conversion script
 ```
 
 ## Codec Reference

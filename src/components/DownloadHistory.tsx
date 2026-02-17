@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { DownloadHistoryItem } from '../types'
+import type { DownloadHistoryItem, QueueDownloadItem } from '../types'
 import './DownloadHistory.css'
 
 type FilterType = 'all' | 'completed' | 'failed';
@@ -7,9 +7,18 @@ type FilterType = 'all' | 'completed' | 'failed';
 interface DownloadHistoryProps {
   currentDownload: DownloadHistoryItem | null;
   onCancelDownload?: () => void;
+  queueItems?: QueueDownloadItem[];
+  activeQueueItem?: QueueDownloadItem | null;
+  onRemoveQueueItem?: (queueItemId: string) => void;
 }
 
-export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownload, onCancelDownload }) => {
+export const DownloadHistory: React.FC<DownloadHistoryProps> = ({
+  currentDownload,
+  onCancelDownload,
+  queueItems = [],
+  activeQueueItem = null,
+  onRemoveQueueItem
+}) => {
   const [history, setHistory] = useState<DownloadHistoryItem[]>([]);
   const [filter, setFilter] = useState<FilterType>('all');
   const [isLoading, setIsLoading] = useState(true);
@@ -174,7 +183,47 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
       </div>
 
       <div className="history-list">
-        {displayItems.length === 0 ? (
+        {activeQueueItem && (
+          <div className="history-item queue-item active">
+            <div className="history-details">
+              <div className="history-title" title={activeQueueItem.url}>
+                🔄 Now downloading (queued): {activeQueueItem.url}
+              </div>
+              <div className="history-meta">
+                <span className="history-time">Single active download mode</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {queueItems.map((queuedItem, idx) => (
+          <div key={queuedItem.id} className="history-item queue-item">
+            <div className="history-details">
+              <div className="history-title" title={queuedItem.url}>
+                ⏳ Queue #{idx + 1}: {queuedItem.url}
+              </div>
+              <div className="history-meta">
+                <span className="history-time">Waiting for active download to finish</span>
+              </div>
+            </div>
+            {onRemoveQueueItem && (
+              <div className="queue-actions">
+                <button
+                  className="history-cancel-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveQueueItem(queuedItem.id);
+                  }}
+                  title="Remove from queue"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {displayItems.length === 0 && !activeQueueItem && queueItems.length === 0 ? (
           <div className="history-empty">
             {filter === 'all' 
               ? 'No downloads yet. Paste a YouTube URL above to get started!'

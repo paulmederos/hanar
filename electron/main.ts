@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, WebContents } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import * as fs from 'node:fs'
 import { spawn, ChildProcess } from 'node:child_process'
 import { 
   loadSettings, 
@@ -9,13 +10,37 @@ import {
   addDownloadToHistory, 
   updateDownloadInHistory, 
   clearDownloadHistory,
-  DownloadHistoryItem
+  loadWishlist,
+  addWishlistItem,
+  updateWishlistItem,
+  removeWishlistItem,
+  clearWishlist,
+  DownloadHistoryItem,
+  WishlistItem
 } from './store'
 
 // Track active download processes for cancellation
 let activeYtDlpProcess: ChildProcess | null = null;
 let activeFfmpegProcess: ChildProcess | null = null;
 let isDownloadCancelled = false;
+let isDownloadPipelineActive = false;
+
+type DownloadOptions = {
+  outputDir?: string;
+  archiveFile?: string;
+  downloadPreset?: string;
+};
+
+type QueueDownloadItem = {
+  id: string;
+  url: string;
+  options: DownloadOptions;
+  wishlistItemId?: string;
+  queuedAt: string;
+};
+
+const downloadQueue: QueueDownloadItem[] = [];
+let activeQueueItem: QueueDownloadItem | null = null;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -45,6 +70,22 @@ if (process.platform === 'win32') {
 }
 
 let win: BrowserWindow | null
+
+const getYoutubeId = (url: string): string | null => {
+  const regExp = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
+};
+
+const normalizeUrl = (url: string): string => url.trim();
+
+const emitQueueUpdate = () => {
+  win?.webContents.send('download-queue-updated', {
+    activeItem: activeQueueItem,
+    queue: downloadQueue,
+    isActive: isDownloadPipelineActive,
+  });
+};
 
 function createWindow() {
   console.log('Creating Electron window...');
@@ -234,51 +275,42 @@ ipcMain.handle('cancel-download', async () => {
   return { success: true, message: 'Download cancelled' };
 });
 
-// Modify the download-video handler to accept directory options
-ipcMain.handle('download-video', async (event, url: string, options: { outputDir?: string, archiveFile?: string, downloadPreset?: string } = {}) => {
+const runDownload = (
+  webContents: WebContents,
+  rawUrl: string,
+  options: DownloadOptions = {},
+  wishlistItemId?: string
+) => {
+  const url = normalizeUrl(rawUrl);
   console.log(`Received download request for: ${url} with options:`, options);
-  const webContents = event.sender;
 
-  // --- Configuration (from your .bat script or provided options) ---
   const DEFAULT_PLEX_DIR = 'E:\\Plex';
   const DEFAULT_OUTPUT_DIR = path.join(DEFAULT_PLEX_DIR, 'YouTube');
   const DEFAULT_ARCHIVE_FILE = path.join(DEFAULT_PLEX_DIR, 'scripts', 'archive.txt');
-  
-  // Use provided options if available, otherwise use defaults
+
   const OUTPUT_DIR = options.outputDir || DEFAULT_OUTPUT_DIR;
   const ARCHIVE_FILE = options.archiveFile || DEFAULT_ARCHIVE_FILE;
-  // Download presets: '1080p-fast' (H.264, no conversion) or 'max-quality' (best quality, convert to HEVC)
   const DOWNLOAD_PRESET = options.downloadPreset || '1080p-fast';
-  // --- End Configuration ---
 
-  // Save the current settings if they're provided
-  if (options.outputDir) {
-    updateSetting('outputDir', options.outputDir);
-  }
-  if (options.archiveFile) {
-    updateSetting('archiveFile', options.archiveFile);
-  }
-  if (options.downloadPreset) {
-    updateSetting('downloadPreset', options.downloadPreset);
-  }
+  if (options.outputDir) updateSetting('outputDir', options.outputDir);
+  if (options.archiveFile) updateSetting('archiveFile', options.archiveFile);
+  if (options.downloadPreset) updateSetting('downloadPreset', options.downloadPreset);
 
   const presetDescriptions: Record<string, string> = {
     '1080p-fast': '1080p Fast (H.264, no conversion) - Direct play on Apple TV/iPad',
     'max-quality': 'Max Quality (4K, converts to HEVC via GPU) - Direct play on Apple TV/iPad'
   };
 
+  isDownloadPipelineActive = true;
+  emitQueueUpdate();
+  if (wishlistItemId) {
+    updateWishlistItem(wishlistItemId, { status: 'downloading', lastError: undefined });
+  }
+
   webContents.send('download-status', `Using output directory: ${OUTPUT_DIR}`);
   webContents.send('download-status', `Using archive file: ${ARCHIVE_FILE}`);
   webContents.send('download-status', `Preset: ${presetDescriptions[DOWNLOAD_PRESET] || DOWNLOAD_PRESET}`);
 
-  // Function to extract YouTube video ID
-  const getYoutubeId = (url: string): string | null => {
-    const regExp = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
-  };
-
-  // Try to extract the video ID immediately
   const videoId = getYoutubeId(url);
   if (videoId) {
     webContents.send('download-progress', {
@@ -289,35 +321,28 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
         thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
         uploader: ''
       },
-      message: 'Preparing download...'
+      message: 'Preparing download...',
+      videoPercent: 0,
+      audioPercent: 0
     });
   }
 
-  // Build format string based on preset
-  // '1080p-fast': H.264 video + AAC audio, max 1080p, no conversion needed
-  // 'max-quality': Best quality (VP9/AV1), will convert to HEVC after download
   let formatString: string;
   let needsConversion = false;
-  
+
   if (DOWNLOAD_PRESET === '1080p-fast') {
-    // Get H.264 + AAC directly from YouTube (max 1080p)
     formatString = 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/' +
                    'bestvideo[vcodec^=avc1][height<=1080]+bestaudio/' +
                    'best[height<=1080]/best';
-    needsConversion = false;
-    webContents.send('download-status', `Format: H.264 + AAC (max 1080p, no conversion needed)`);
+    webContents.send('download-status', 'Format: H.264 + AAC (max 1080p, no conversion needed)');
   } else if (DOWNLOAD_PRESET === 'max-quality') {
-    // Get best quality (VP9/AV1), will convert to HEVC
     formatString = 'bestvideo+bestaudio/best';
     needsConversion = true;
-    webContents.send('download-status', `Format: Best quality (VP9/AV1), will convert to HEVC using GPU`);
+    webContents.send('download-status', 'Format: Best quality (VP9/AV1), will convert to HEVC using GPU');
   } else {
-    // Fallback to 1080p-fast
     formatString = 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/best[height<=1080]/best';
-    needsConversion = false;
   }
 
-  // --- yt-dlp Arguments ---
   const args = [
     '--download-archive', ARCHIVE_FILE,
     '-f', formatString,
@@ -330,39 +355,53 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
     '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     '--no-mtime',
     '--progress',
-    url // The URL to download
+    url
   ];
-  // --- End yt-dlp Arguments ---
 
-  webContents.send('download-status', 'Starting yt-dlp process...')
-
-  // Reset cancellation flag
+  webContents.send('download-status', 'Starting yt-dlp process...');
   isDownloadCancelled = false;
 
-  // Variables to track download state
   let currentPhase: 'preparing' | 'metadata' | 'thumbnail' | 'video' | 'audio' | 'merging' | 'converting' | 'complete' | 'error' = 'preparing';
   let videoTitle = '';
   let videoFileSize = '';
   let audioFileSize = '';
   let downloadSummary = '';
-  let currentProgress = 0;
-  let downloadedFilePath = '';  // Track the final downloaded file for potential HEVC conversion
+  let downloadedFilePath = '';
+  let videoPercent = 0;
+  let audioPercent = 0;
+  let finalized = false;
+
+  const finalizeDownload = (result: 'completed' | 'failed' | 'cancelled', lastError?: string) => {
+    if (finalized) return;
+    finalized = true;
+    isDownloadPipelineActive = false;
+    activeQueueItem = null;
+    emitQueueUpdate();
+    if (wishlistItemId) {
+      updateWishlistItem(wishlistItemId, {
+        status: result === 'completed' ? 'completed' : result === 'cancelled' ? 'wishlist' : 'failed',
+        lastError
+      });
+    }
+
+    if (downloadQueue.length > 0 && win) {
+      const nextItem = downloadQueue.shift()!;
+      activeQueueItem = nextItem;
+      emitQueueUpdate();
+      runDownload(win.webContents, nextItem.url, nextItem.options, nextItem.wishlistItemId);
+    }
+  };
 
   try {
-    const ytDlpPath = 'yt-dlp' // Assume yt-dlp is in PATH
-    const child = spawn(ytDlpPath, args);
+    const child = spawn('yt-dlp', args);
     activeYtDlpProcess = child;
-
-    webContents.send('download-status', `Executing: ${ytDlpPath} ${args.join(' ')}`);
+    webContents.send('download-status', `Executing: yt-dlp ${args.join(' ')}`);
 
     child.stdout.on('data', (data) => {
       const output = data.toString();
       console.log('yt-dlp stdout:', output);
       webContents.send('download-status', output);
-      
-      // --- PROGRESS PARSING LOGIC ---
-      
-      // Extract video title
+
       const titleMatch = output.match(/\[info\] (.+): Downloading/i);
       if (titleMatch && titleMatch[1]) {
         videoTitle = titleMatch[1];
@@ -375,42 +414,47 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
               thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
               uploader: ''
             },
-            message: `Getting information for "${videoTitle}"...`
+            message: `Getting information for "${videoTitle}"...`,
+            videoPercent,
+            audioPercent
           });
         }
         currentPhase = 'metadata';
       }
-      
-      // Detect thumbnail download
+
       if (output.includes('Downloading thumbnail') || output.includes('Writing thumbnail')) {
         currentPhase = 'thumbnail';
         webContents.send('download-progress', {
           phase: 'thumbnail',
-          message: 'Downloading video thumbnail...'
+          message: 'Downloading video thumbnail...',
+          videoPercent,
+          audioPercent
         });
       }
-      
-      // Detect video download start
+
       const videoDestMatch = output.match(/\[download\] Destination: .+?\.f\d+\.mp4/i);
       if (videoDestMatch && currentPhase !== 'video') {
         currentPhase = 'video';
+        videoPercent = 0;
         webContents.send('download-progress', {
           phase: 'video',
           message: 'Downloading video stream...',
-          percent: 0
+          percent: 0,
+          videoPercent,
+          audioPercent
         });
       }
-      
-      // Parse video progress percentage
+
       const percentMatch = output.match(/\[download\]\s+([\d.]+)%/i);
       if (percentMatch && percentMatch[1] && currentPhase === 'video') {
-        currentProgress = parseFloat(percentMatch[1]);
+        videoPercent = parseFloat(percentMatch[1]);
         webContents.send('download-progress', {
           phase: 'video',
-          percent: currentProgress
+          percent: videoPercent,
+          videoPercent,
+          audioPercent
         });
-        
-        // Extract video size
+
         const sizeMatch = output.match(/of\s+~?\s*([\d.]+(?:KiB|MiB|GiB))/i);
         if (sizeMatch && sizeMatch[1] && !videoFileSize) {
           videoFileSize = sizeMatch[1];
@@ -418,36 +462,38 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
           webContents.send('download-progress', {
             phase: 'video',
             message: `Downloading video stream (${videoFileSize})...`,
-            summary: downloadSummary
+            summary: downloadSummary,
+            videoPercent,
+            audioPercent
           });
         }
       }
-      
-      // Detect audio download start 
-      if ((currentPhase === 'video' && output.match(/100%/i) && output.match(/ETA 00:00/i)) || 
-          output.includes('download] 100% of') || 
+
+      if ((currentPhase === 'video' && output.match(/100%/i) && output.match(/ETA 00:00/i)) ||
+          output.includes('download] 100% of') ||
           output.match(/download] 100% of .+ in /i)) {
-        // Only transition to audio if we were in video phase
         if (currentPhase === 'video') {
           currentPhase = 'audio';
-          currentProgress = 0;
+          audioPercent = 0;
           webContents.send('download-progress', {
             phase: 'audio',
             message: 'Downloading audio stream...',
-            percent: 0
+            percent: 0,
+            videoPercent,
+            audioPercent
           });
         }
       }
-      
-      // Parse audio progress percentage
+
       if (percentMatch && percentMatch[1] && currentPhase === 'audio') {
-        currentProgress = parseFloat(percentMatch[1]);
+        audioPercent = parseFloat(percentMatch[1]);
         webContents.send('download-progress', {
           phase: 'audio',
-          percent: currentProgress
+          percent: audioPercent,
+          videoPercent,
+          audioPercent
         });
-        
-        // Extract audio size
+
         const sizeMatch = output.match(/of\s+~?\s*([\d.]+(?:KiB|MiB|GiB))/i);
         if (sizeMatch && sizeMatch[1] && !audioFileSize) {
           audioFileSize = sizeMatch[1];
@@ -455,31 +501,35 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
           webContents.send('download-progress', {
             phase: 'audio',
             message: `Downloading audio stream (${audioFileSize})...`,
-            summary: downloadSummary
+            summary: downloadSummary,
+            videoPercent,
+            audioPercent
           });
         }
       }
-      
-      // Detect merging phase and capture final file path
+
       if (output.includes('[Merger]') || output.includes('Merging formats')) {
         currentPhase = 'merging';
         const destinationMatch = output.match(/Merging formats into "(.+?)"/i);
         if (destinationMatch && destinationMatch[1]) {
-          downloadedFilePath = destinationMatch[1];  // Capture full path for conversion
+          downloadedFilePath = destinationMatch[1];
           const filename = path.basename(destinationMatch[1]);
           webContents.send('download-progress', {
             phase: 'merging',
-            message: `Creating "${filename}"...`
+            message: `Creating "${filename}"...`,
+            videoPercent,
+            audioPercent
           });
         } else {
           webContents.send('download-progress', {
             phase: 'merging',
-            message: 'Merging video and audio...'
+            message: 'Merging video and audio...',
+            videoPercent,
+            audioPercent
           });
         }
       }
-      
-      // Also capture file path from "has already been downloaded" message (for archive skips)
+
       const alreadyDownloadedMatch = output.match(/\[download\] (.+?) has already been downloaded/i);
       if (alreadyDownloadedMatch && alreadyDownloadedMatch[1]) {
         downloadedFilePath = alreadyDownloadedMatch[1];
@@ -489,15 +539,15 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
     child.stderr.on('data', (data) => {
       const errorOutput = data.toString();
       console.error('yt-dlp stderr:', errorOutput);
-      // Send stderr also as status, prefixing with ERROR:
       webContents.send('download-status', `ERROR: ${errorOutput}`);
-      
-      // Only set error phase for actual errors, not warnings
+
       if (!errorOutput.includes('WARNING')) {
         currentPhase = 'error';
         webContents.send('download-progress', {
           phase: 'error',
-          message: `Error: ${errorOutput}`
+          message: `Error: ${errorOutput}`,
+          videoPercent,
+          audioPercent
         });
       }
     });
@@ -506,76 +556,71 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
       console.log(`yt-dlp process exited with code ${code}`);
       activeYtDlpProcess = null;
 
-      // Check if download was cancelled
       if (isDownloadCancelled) {
         webContents.send('download-status', '\nDownload cancelled by user.');
         currentPhase = 'error';
         webContents.send('download-progress', {
           phase: 'error',
-          message: 'Download cancelled'
+          message: 'Download cancelled',
+          videoPercent,
+          audioPercent
         });
+        finalizeDownload('cancelled');
         return;
       }
 
       if (code === 0) {
         webContents.send('download-status', '\nDownload successful!');
-        
-        // Check if we need to convert to HEVC (max-quality preset)
+
         if (needsConversion && downloadedFilePath) {
           webContents.send('download-status', '\nStarting HEVC conversion using GPU (NVENC)...');
           webContents.send('download-progress', {
             phase: 'converting',
-            message: 'Converting to HEVC using GPU...'
+            message: 'Converting to HEVC using GPU...',
+            videoPercent: 100,
+            audioPercent: 100
           });
-          
-          // Build output path for converted file
+
           const inputPath = downloadedFilePath;
           const outputPath = inputPath.replace(/\.mp4$/i, '_hevc.mp4');
-          
-          // Run ffmpeg with NVENC for hardware-accelerated HEVC encoding
+
           const ffmpegArgs = [
             '-i', inputPath,
             '-map', '0',
-            '-c:v', 'hevc_nvenc',      // NVIDIA NVENC hardware encoder
-            '-cq', '23',                // Constant quality (similar to CRF)
-            '-preset', 'p4',            // Balanced preset
-            '-tag:v', 'hvc1',           // Required for Apple TV compatibility
-            '-c:a', 'aac',              // Convert audio to AAC
+            '-c:v', 'hevc_nvenc',
+            '-cq', '23',
+            '-preset', 'p4',
+            '-tag:v', 'hvc1',
+            '-c:a', 'aac',
             '-b:a', '192k',
             '-movflags', '+faststart',
-            '-y',                       // Overwrite
+            '-y',
             outputPath
           ];
-          
+
           webContents.send('download-status', `Converting: ${path.basename(inputPath)}`);
-          
           const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
           activeFfmpegProcess = ffmpegProcess;
-          
+
           ffmpegProcess.stderr.on('data', (data) => {
             const output = data.toString();
-            // Parse ffmpeg progress
             const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2})/);
             const speedMatch = output.match(/speed=([\d.]+)x/);
             if (timeMatch && speedMatch) {
               webContents.send('download-progress', {
                 phase: 'converting',
-                message: `Converting to HEVC... ${timeMatch[0]} @ ${speedMatch[1]}x speed`
+                message: `Converting to HEVC... ${timeMatch[0]} @ ${speedMatch[1]}x speed`,
+                videoPercent: 100,
+                audioPercent: 100
               });
             }
           });
-          
+
           ffmpegProcess.on('close', (ffmpegCode) => {
             activeFfmpegProcess = null;
-
-            // Check if conversion was cancelled
             if (isDownloadCancelled) {
-              // Clean up partial converted file
               try {
-                const fs = require('fs');
-                if (fs.existsSync(outputPath)) {
-                  fs.unlinkSync(outputPath);
-                }
+                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
               } catch (cleanupErr) {
                 console.error('Error cleaning up partial conversion file:', cleanupErr);
               }
@@ -583,23 +628,25 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
               currentPhase = 'error';
               webContents.send('download-progress', {
                 phase: 'error',
-                message: 'Download cancelled'
+                message: 'Download cancelled',
+                videoPercent,
+                audioPercent
               });
+              finalizeDownload('cancelled');
               return;
             }
 
             if (ffmpegCode === 0) {
-              // Conversion successful - replace original with converted file
               try {
-                const fs = require('fs');
-                fs.unlinkSync(inputPath);  // Delete original VP9/AV1 file
-                fs.renameSync(outputPath, inputPath);  // Rename HEVC file to original name
-                
+                fs.unlinkSync(inputPath);
+                fs.renameSync(outputPath, inputPath);
                 webContents.send('download-status', '\n✅ HEVC conversion complete!');
                 currentPhase = 'complete';
                 webContents.send('download-progress', {
                   phase: 'complete',
-                  message: videoTitle ? `Successfully downloaded and converted "${videoTitle}"!` : 'Download and conversion complete!'
+                  message: videoTitle ? `Successfully downloaded and converted "${videoTitle}"!` : 'Download and conversion complete!',
+                  videoPercent: 100,
+                  audioPercent: 100
                 });
               } catch (fsError) {
                 console.error('Error replacing file:', fsError);
@@ -607,7 +654,9 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
                 currentPhase = 'complete';
                 webContents.send('download-progress', {
                   phase: 'complete',
-                  message: 'Download complete (HEVC file saved with _hevc suffix)'
+                  message: 'Download complete (HEVC file saved with _hevc suffix)',
+                  videoPercent: 100,
+                  audioPercent: 100
                 });
               }
             } else {
@@ -615,35 +664,46 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
               currentPhase = 'complete';
               webContents.send('download-progress', {
                 phase: 'complete',
-                message: 'Download complete (conversion failed, original VP9/AV1 kept)'
+                message: 'Download complete (conversion failed, original VP9/AV1 kept)',
+                videoPercent: 100,
+                audioPercent: 100
               });
             }
+            finalizeDownload('completed');
           });
-          
+
           ffmpegProcess.on('error', (err) => {
             console.error('FFmpeg error:', err);
             webContents.send('download-status', `\n⚠️ FFmpeg error: ${err.message}. Original file kept.`);
             currentPhase = 'complete';
             webContents.send('download-progress', {
               phase: 'complete',
-              message: 'Download complete (conversion failed, original kept)'
+              message: 'Download complete (conversion failed, original kept)',
+              videoPercent: 100,
+              audioPercent: 100
             });
+            finalizeDownload('completed');
           });
         } else {
-          // No conversion needed
           currentPhase = 'complete';
           webContents.send('download-progress', {
             phase: 'complete',
-            message: videoTitle ? `Successfully downloaded "${videoTitle}"!` : 'Download complete!'
+            message: videoTitle ? `Successfully downloaded "${videoTitle}"!` : 'Download complete!',
+            videoPercent: 100,
+            audioPercent: 100
           });
+          finalizeDownload('completed');
         }
       } else {
         webContents.send('download-status', `\nDownload failed. Error code: ${code}`);
         currentPhase = 'error';
         webContents.send('download-progress', {
           phase: 'error',
-          message: `Download failed with error code: ${code}`
+          message: `Download failed with error code: ${code}`,
+          videoPercent,
+          audioPercent
         });
+        finalizeDownload('failed', `Download failed with error code: ${code}`);
       }
     });
 
@@ -653,8 +713,11 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
       currentPhase = 'error';
       webContents.send('download-progress', {
         phase: 'error',
-        message: `Failed to start yt-dlp process: ${err.message}`
+        message: `Failed to start yt-dlp process: ${err.message}`,
+        videoPercent,
+        audioPercent
       });
+      finalizeDownload('failed', err.message);
     });
 
   } catch (error) {
@@ -662,9 +725,127 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
     webContents.send('download-status', `ERROR: Could not execute download. ${error}`);
     webContents.send('download-progress', {
       phase: 'error',
-      message: `Could not execute download: ${error}`
+      message: `Could not execute download: ${error}`,
+      videoPercent,
+      audioPercent
     });
+    finalizeDownload('failed', String(error));
   }
+};
+
+// Direct (manual) download from Download view. No queueing from this path.
+ipcMain.handle('download-video', async (event, rawUrl: string, options: DownloadOptions = {}) => {
+  const url = normalizeUrl(rawUrl);
+  if (isDownloadPipelineActive) {
+    return { started: false, reason: 'busy', message: 'Another download is already active.' };
+  }
+  runDownload(event.sender, url, options);
+  return { started: true };
+});
+
+// Wishlist APIs
+ipcMain.handle('get-wishlist', async () => {
+  return loadWishlist();
+});
+
+ipcMain.handle('add-wishlist-item', async (_event, item: WishlistItem) => {
+  addWishlistItem({
+    ...item,
+    status: item.status || 'wishlist',
+    addedAt: item.addedAt || new Date().toISOString(),
+  });
+  return loadWishlist();
+});
+
+ipcMain.handle('update-wishlist-item', async (_event, id: string, updates: Partial<WishlistItem>) => {
+  updateWishlistItem(id, updates);
+  return loadWishlist();
+});
+
+ipcMain.handle('remove-wishlist-item', async (_event, id: string) => {
+  removeWishlistItem(id);
+  return loadWishlist();
+});
+
+ipcMain.handle('clear-wishlist', async () => {
+  clearWishlist();
+  return [];
+});
+
+ipcMain.handle('get-download-queue', async () => {
+  return {
+    activeItem: activeQueueItem,
+    queue: downloadQueue,
+    isActive: isDownloadPipelineActive,
+  };
+});
+
+ipcMain.handle('remove-queue-item', async (_event, queueItemId: string) => {
+  const index = downloadQueue.findIndex(q => q.id === queueItemId);
+  if (index === -1) {
+    return {
+      removed: false,
+      reason: 'missing',
+      activeItem: activeQueueItem,
+      queue: downloadQueue,
+      isActive: isDownloadPipelineActive,
+    };
+  }
+
+  const [removedItem] = downloadQueue.splice(index, 1);
+  if (removedItem?.wishlistItemId) {
+    updateWishlistItem(removedItem.wishlistItemId, { status: 'wishlist' });
+  }
+
+  emitQueueUpdate();
+  return {
+    removed: true,
+    activeItem: activeQueueItem,
+    queue: downloadQueue,
+    isActive: isDownloadPipelineActive,
+  };
+});
+
+ipcMain.handle('queue-download', async (_event, wishlistItemId: string, options: DownloadOptions = {}) => {
+  const wishlist = loadWishlist();
+  const item = wishlist.find(w => w.id === wishlistItemId);
+  if (!item) {
+    return { queued: false, reason: 'missing', message: 'Wishlist item not found.' };
+  }
+
+  const duplicateInQueue = downloadQueue.some(q => q.wishlistItemId === wishlistItemId || q.url === item.url);
+  const duplicateActive = !!activeQueueItem && (
+    activeQueueItem.wishlistItemId === wishlistItemId || activeQueueItem.url === item.url
+  );
+  if (duplicateInQueue || duplicateActive) {
+    return { queued: false, reason: 'duplicate', message: 'Item is already queued.' };
+  }
+
+  const queueItem: QueueDownloadItem = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    url: item.url,
+    options,
+    wishlistItemId,
+    queuedAt: new Date().toISOString(),
+  };
+
+  downloadQueue.push(queueItem);
+  updateWishlistItem(wishlistItemId, { status: 'queued', lastError: undefined });
+  emitQueueUpdate();
+
+  if (!isDownloadPipelineActive && win) {
+    const nextItem = downloadQueue.shift()!;
+    activeQueueItem = nextItem;
+    emitQueueUpdate();
+    runDownload(win.webContents, nextItem.url, nextItem.options, nextItem.wishlistItemId);
+  }
+
+  return {
+    queued: true,
+    activeItem: activeQueueItem,
+    queue: downloadQueue,
+    isActive: isDownloadPipelineActive,
+  };
 });
 
 // Clean up any active download processes on app quit

@@ -116,6 +116,14 @@ body {
   cursor: not-allowed;
 }
 
+.download-button.secondary {
+  background: linear-gradient(135deg, rgba(70, 55, 117, 0.9) 0%, rgba(60, 47, 100, 0.9) 100%);
+}
+
+.download-button.secondary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--hanar-light-purple) 0%, rgba(101, 77, 163, 0.9) 100%);
+}
+
 /* Current preset indicator */
 .current-preset {
   display: flex;
@@ -155,6 +163,184 @@ body {
 
 .settings-link:hover {
   color: var(--hanar-bright-purple);
+}
+
+/* ============ Stream Progress ============ */
+.stream-progress-card {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.stream-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stream-progress-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #fff;
+}
+
+.stream-progress-header span {
+  font-size: 12px;
+  color: #b9bbbe;
+}
+
+.stream-progress-row {
+  display: grid;
+  grid-template-columns: 50px 1fr 42px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.stream-progress-row label {
+  font-size: 12px;
+  color: #b9bbbe;
+}
+
+.stream-progress-row > span {
+  font-size: 12px;
+  color: #dcddde;
+  text-align: right;
+}
+
+.stream-progress-bar {
+  height: 8px;
+  border-radius: 10px;
+  background: rgba(25, 20, 40, 0.7);
+  overflow: hidden;
+}
+
+.stream-progress-fill {
+  height: 100%;
+  transition: width 0.25s ease;
+}
+
+.stream-progress-fill.video {
+  background: linear-gradient(90deg, #7c5ed1, #a487f1);
+}
+
+.stream-progress-fill.audio {
+  background: linear-gradient(90deg, #3bb3c8, #61d3e6);
+}
+
+.stream-progress-summary {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #9ba0a6;
+}
+
+/* ============ Unified Flow Section ============ */
+.flow-card {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.flow-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flow-header h4 {
+  margin: 0;
+  color: #fff;
+  font-size: 14px;
+}
+
+.flow-header span,
+.flow-subtext {
+  color: #b9bbbe;
+  font-size: 12px;
+}
+
+.flow-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flow-subtext {
+  margin: 6px 0 10px;
+}
+
+.flow-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.flow-input-row input {
+  flex: 1;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(60, 46, 88, 0.7);
+  color: #dcddde;
+}
+
+.flow-input-row button,
+.flow-item-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, var(--hanar-light-purple) 0%, rgb(113, 73, 180) 100%);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.flow-input-row button.danger,
+.flow-item-actions button.danger {
+  background: rgba(220, 53, 69, 0.2);
+  border-color: rgba(220, 53, 69, 0.35);
+  color: #ff9aa5;
+}
+
+.flow-item-actions button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(40, 30, 65, 0.45);
+}
+
+.flow-item-label {
+  font-size: 12px;
+  color: #b9bbbe;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.queue-empty {
+  color: #8e9297;
+  font-size: 12px;
+  padding: 8px 0;
 }
 
 /* ============ Logs Page ============ */

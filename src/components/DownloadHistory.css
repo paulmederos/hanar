@@ -142,6 +142,22 @@
   margin-bottom: 0;
 }
 
+.history-item.queue-item {
+  border-color: rgba(131, 88, 196, 0.28);
+  background: linear-gradient(135deg, rgba(50, 38, 80, 0.65) 0%, rgba(42, 33, 65, 0.65) 100%);
+}
+
+.history-item.queue-item.active {
+  border-color: rgba(74, 222, 128, 0.35);
+  box-shadow: 0 0 14px rgba(74, 222, 128, 0.15);
+}
+
+.queue-actions {
+  display: flex;
+  align-items: center;
+  padding-right: 10px;
+}
+
 /* Status-specific styles */
 .history-item.status-active {
   border-color: rgba(131, 88, 196, 0.4);

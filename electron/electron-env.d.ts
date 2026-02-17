@@ -48,21 +48,51 @@ interface AppSettings {
   downloadPreset?: string;
 }
 
+interface WishlistItem {
+  id: string;
+  url: string;
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  uploader: string;
+  status: 'wishlist' | 'queued' | 'downloading' | 'completed' | 'failed';
+  addedAt: string;
+  updatedAt?: string;
+  lastError?: string;
+}
+
+interface QueueDownloadItem {
+  id: string;
+  url: string;
+  options: { outputDir?: string; archiveFile?: string; downloadPreset?: string };
+  wishlistItemId?: string;
+  queuedAt: string;
+}
+
 // Used in Renderer process, expose in `preload.ts`
 interface Window {
   electronAPI: {
-    downloadVideo: (url: string, options?: { outputDir?: string; archiveFile?: string; downloadPreset?: string }) => Promise<unknown>;
+    downloadVideo: (url: string, options?: { outputDir?: string; archiveFile?: string; downloadPreset?: string }) => Promise<{ started: boolean; reason?: string; message?: string }>;
     cancelDownload: () => Promise<{ success: boolean; message: string }>;
-    onStatusUpdate: (callback: (event: any, message: string) => void) => () => void;
-    onProgressUpdate: (callback: (event: any, data: any) => void) => () => void;
+    onStatusUpdate: (callback: (event: unknown, message: string) => void) => () => void;
+    onProgressUpdate: (callback: (event: unknown, data: Record<string, unknown>) => void) => () => void;
+    onQueueUpdate: (callback: (event: unknown, data: { activeItem: QueueDownloadItem | null; queue: QueueDownloadItem[]; isActive: boolean }) => void) => () => void;
     selectDirectory: (title?: string) => Promise<string | null>;
-    selectFile: (title?: string, filters?: any[]) => Promise<string | null>;
+    selectFile: (title?: string, filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
     getSettings: () => Promise<AppSettings>;
     getDownloadHistory: () => Promise<DownloadHistoryItem[]>;
     addDownloadHistory: (item: DownloadHistoryItem) => Promise<void>;
     updateDownloadHistory: (id: string, updates: Partial<DownloadHistoryItem>) => Promise<void>;
     clearDownloadHistory: () => Promise<void>;
     openExternal: (url: string) => Promise<void>;
+    getWishlist: () => Promise<WishlistItem[]>;
+    addWishlistItem: (item: WishlistItem) => Promise<WishlistItem[]>;
+    updateWishlistItem: (id: string, updates: Partial<WishlistItem>) => Promise<WishlistItem[]>;
+    removeWishlistItem: (id: string) => Promise<WishlistItem[]>;
+    clearWishlist: () => Promise<WishlistItem[]>;
+    getDownloadQueue: () => Promise<{ activeItem: QueueDownloadItem | null; queue: QueueDownloadItem[]; isActive: boolean }>;
+    queueDownload: (wishlistItemId: string, options?: { outputDir?: string; archiveFile?: string; downloadPreset?: string }) => Promise<{ queued: boolean; reason?: string; message?: string }>;
+    removeQueueItem: (queueItemId: string) => Promise<{ removed: boolean; reason?: string; activeItem: QueueDownloadItem | null; queue: QueueDownloadItem[]; isActive: boolean }>;
     ping: () => string;
   }
 }

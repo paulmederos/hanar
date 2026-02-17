@@ -29,6 +29,20 @@ export interface DownloadHistoryItem {
   fileSize?: string;
 }
 
+// Wishlist item interface
+export interface WishlistItem {
+  id: string;
+  url: string;
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  uploader: string;
+  status: 'wishlist' | 'queued' | 'downloading' | 'completed' | 'failed';
+  addedAt: string;
+  updatedAt?: string;
+  lastError?: string;
+}
+
 // Get the path to the settings file in the app's user data directory
 const getSettingsPath = (): string => {
   const userDataPath = app.getPath('userData');
@@ -39,6 +53,12 @@ const getSettingsPath = (): string => {
 const getHistoryPath = (): string => {
   const userDataPath = app.getPath('userData');
   return path.join(userDataPath, 'download-history.json');
+};
+
+// Get the path to the wishlist file
+const getWishlistPath = (): string => {
+  const userDataPath = app.getPath('userData');
+  return path.join(userDataPath, 'wishlist.json');
 };
 
 // Load settings from file
@@ -169,4 +189,88 @@ export const updateDownloadInHistory = (id: string, updates: Partial<DownloadHis
 // Clear download history
 export const clearDownloadHistory = (): void => {
   saveDownloadHistory([]);
+};
+
+// ============ Wishlist Functions ============
+
+// Load wishlist from file
+export const loadWishlist = (): WishlistItem[] => {
+  try {
+    const wishlistPath = getWishlistPath();
+
+    if (!fs.existsSync(wishlistPath)) {
+      return [];
+    }
+
+    const data = fs.readFileSync(wishlistPath, 'utf8');
+    const wishlist = JSON.parse(data) as WishlistItem[];
+
+    console.log(`Wishlist loaded: ${wishlist.length} items`);
+    return wishlist;
+  } catch (error) {
+    console.error('Error loading wishlist:', error);
+    return [];
+  }
+};
+
+// Save wishlist to file
+export const saveWishlist = (wishlist: WishlistItem[]): void => {
+  try {
+    const wishlistPath = getWishlistPath();
+
+    const wishlistDir = path.dirname(wishlistPath);
+    if (!fs.existsSync(wishlistDir)) {
+      fs.mkdirSync(wishlistDir, { recursive: true });
+    }
+
+    fs.writeFileSync(wishlistPath, JSON.stringify(wishlist, null, 2));
+    console.log(`Wishlist saved: ${wishlist.length} items`);
+  } catch (error) {
+    console.error('Error saving wishlist:', error);
+  }
+};
+
+export const addWishlistItem = (item: WishlistItem): void => {
+  const wishlist = loadWishlist();
+  const existingIndex = wishlist.findIndex(w => w.videoId && w.videoId === item.videoId);
+  const existingByUrlIndex = wishlist.findIndex(w => w.url === item.url);
+  const targetIndex = existingIndex >= 0 ? existingIndex : existingByUrlIndex;
+
+  if (targetIndex >= 0) {
+    wishlist[targetIndex] = {
+      ...wishlist[targetIndex],
+      ...item,
+      id: wishlist[targetIndex].id,
+      addedAt: wishlist[targetIndex].addedAt,
+      updatedAt: new Date().toISOString(),
+    };
+  } else {
+    wishlist.unshift(item);
+  }
+
+  saveWishlist(wishlist.slice(0, 500));
+};
+
+export const updateWishlistItem = (id: string, updates: Partial<WishlistItem>): void => {
+  const wishlist = loadWishlist();
+  const index = wishlist.findIndex(w => w.id === id);
+
+  if (index >= 0) {
+    wishlist[index] = {
+      ...wishlist[index],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    saveWishlist(wishlist);
+  }
+};
+
+export const removeWishlistItem = (id: string): void => {
+  const wishlist = loadWishlist();
+  const filtered = wishlist.filter(w => w.id !== id);
+  saveWishlist(filtered);
+};
+
+export const clearWishlist = (): void => {
+  saveWishlist([]);
 };

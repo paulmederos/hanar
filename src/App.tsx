@@ -2,14 +2,23 @@ import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 import { Sidebar, ViewType } from './components/Sidebar'
 import { DownloadHistory } from './components/DownloadHistory'
-import type { DownloadHistoryItem, VideoInfo, DownloadPhase } from './types'
+import type { DownloadHistoryItem, VideoInfo, DownloadPhase, AppSettings, QueueDownloadItem, WishlistItem } from './types'
+
+type ProgressUpdateData = {
+  phase?: DownloadPhase;
+  percent?: number;
+  videoPercent?: number;
+  audioPercent?: number;
+  videoInfo?: VideoInfo;
+  message?: string;
+  summary?: string;
+}
 
 function App() {
   // Navigation state
   const [activeView, setActiveView] = useState<ViewType>('download')
   
   // Core state
-  const [url, setUrl] = useState('')
   const [status, setStatus] = useState('Idle')
   const [isDownloading, setIsDownloading] = useState(false)
   const [isElectronAPIAvailable, setIsElectronAPIAvailable] = useState(false)
@@ -21,7 +30,7 @@ function App() {
   
   // Download progress state
   const [currentPhase, setCurrentPhase] = useState<DownloadPhase>('idle')
-  const [progressPercent, setProgressPercent] = useState(0)
+  const [, setProgressPercent] = useState(0)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
   const [phaseMessages, setPhaseMessages] = useState<Record<DownloadPhase, string>>({
     idle: 'Ready to download',
@@ -36,6 +45,13 @@ function App() {
     error: 'Error occurred during download'
   })
   const [downloadSummary, setDownloadSummary] = useState('')
+  const [videoProgressPercent, setVideoProgressPercent] = useState(0)
+  const [audioProgressPercent, setAudioProgressPercent] = useState(0)
+  const [wishlistUrl, setWishlistUrl] = useState('')
+  const [wishlistMessage, setWishlistMessage] = useState('Save links to wishlist, then manually queue them.')
+  const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([])
+  const [queueItems, setQueueItems] = useState<QueueDownloadItem[]>([])
+  const [activeQueueItem, setActiveQueueItem] = useState<QueueDownloadItem | null>(null)
   
   // Download history state
   const [currentDownload, setCurrentDownload] = useState<DownloadHistoryItem | null>(null)
@@ -54,7 +70,7 @@ function App() {
     
     const titleMatch = output.match(/\[info\] (.+): Downloading/i);
     if (titleMatch && titleMatch[1]) {
-      const videoId = getYoutubeId(url);
+      const videoId = currentDownload?.videoId || getYoutubeId(activeQueueItem?.url || '');
       if (videoId) {
         const title = titleMatch[1];
         setVideoInfo(prev => ({
@@ -180,8 +196,10 @@ function App() {
         setIsDownloading(false);
         setCurrentPhase('idle');
         setProgressPercent(0);
+        setVideoProgressPercent(0);
+        setAudioProgressPercent(0);
         setCurrentDownload(null);
-        setUrl(''); // Clear URL after successful download
+        setWishlistUrl('');
         setHistoryRefreshKey(k => k + 1);
       }, 2000);
     }
@@ -217,13 +235,15 @@ function App() {
         setHistoryRefreshKey(k => k + 1);
       }, 3000);
     }
-  }, [isDownloading, url, currentPhase, videoInfo?.title]);
+  }, [isDownloading, currentPhase, videoInfo?.title, currentDownload?.videoId, activeQueueItem?.url]);
 
   // Check if electronAPI is available
   useEffect(() => {
     if ('electronAPI' in window && window.electronAPI) {
       setIsElectronAPIAvailable(true);
       loadSavedSettings();
+      loadQueueState();
+      loadWishlist();
     } else {
       setIsElectronAPIAvailable(false);
       setStatus('ERROR: Electron API not available');
@@ -234,12 +254,33 @@ function App() {
     if (!window.electronAPI) return;
     
     try {
-      const settings: any = await window.electronAPI.getSettings();
+      const settings: AppSettings = await window.electronAPI.getSettings();
       if (settings.outputDir) setOutputDir(settings.outputDir);
       if (settings.archiveFile) setArchiveFile(settings.archiveFile);
       if (settings.downloadPreset) setDownloadPreset(settings.downloadPreset);
     } catch (err) {
       console.error('Error loading saved settings:', err);
+    }
+  };
+
+  const loadQueueState = async () => {
+    if (!window.electronAPI?.getDownloadQueue) return;
+    try {
+      const state = await window.electronAPI.getDownloadQueue();
+      setQueueItems(state.queue || []);
+      setActiveQueueItem(state.activeItem || null);
+    } catch (err) {
+      console.error('Error loading queue state:', err);
+    }
+  };
+
+  const loadWishlist = async () => {
+    if (!window.electronAPI?.getWishlist) return;
+    try {
+      const items = await window.electronAPI.getWishlist();
+      setWishlistItems(items);
+    } catch (err) {
+      console.error('Error loading wishlist:', err);
     }
   };
 
@@ -252,7 +293,27 @@ function App() {
       parseOutput(message);
     };
 
-    const handleProgressUpdate = (_event: unknown, data: any) => {
+    const handleProgressUpdate = (_event: unknown, data: ProgressUpdateData) => {
+      if (data.phase === 'preparing' && !currentDownload) {
+        const info = data.videoInfo;
+        const inferredVideoId = info?.id || getYoutubeId(activeQueueItem?.url || '');
+        const inferredUrl = activeQueueItem?.url || (inferredVideoId ? `https://www.youtube.com/watch?v=${inferredVideoId}` : '');
+        const seededDownload: DownloadHistoryItem = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          videoId: inferredVideoId || '',
+          url: inferredUrl,
+          title: info?.title || 'Loading...',
+          thumbnail: info?.thumbnail || (inferredVideoId ? `https://i.ytimg.com/vi/${inferredVideoId}/mqdefault.jpg` : ''),
+          uploader: info?.uploader || '',
+          status: 'downloading',
+          progress: 0,
+          preset: downloadPreset,
+          startedAt: new Date().toISOString(),
+        };
+        setCurrentDownload(seededDownload);
+        window.electronAPI.addDownloadHistory(seededDownload);
+      }
+
       if (data.phase) {
         setCurrentPhase(data.phase);
         if (data.phase === 'converting') {
@@ -266,46 +327,141 @@ function App() {
           });
         }
       }
-      if (data.percent !== undefined) {
-        setProgressPercent(data.percent);
-        setCurrentDownload(prev => prev ? { ...prev, progress: data.percent } : null);
+      const percent = data.percent;
+      if (percent !== undefined) {
+        setProgressPercent(percent);
+        setCurrentDownload(prev => prev ? { ...prev, progress: percent } : null);
       }
-      if (data.videoInfo) {
-        setVideoInfo(data.videoInfo);
+      if (data.videoPercent !== undefined) {
+        setVideoProgressPercent(data.videoPercent);
+      }
+      if (data.audioPercent !== undefined) {
+        setAudioProgressPercent(data.audioPercent);
+      }
+      const nextVideoInfo = data.videoInfo;
+      if (nextVideoInfo) {
+        setVideoInfo(nextVideoInfo);
         setCurrentDownload(prev => {
           if (!prev) return null;
           const updated = { 
             ...prev, 
-            title: data.videoInfo.title || prev.title,
-            thumbnail: data.videoInfo.thumbnail || prev.thumbnail,
-            uploader: data.videoInfo.uploader || prev.uploader,
+            title: nextVideoInfo.title || prev.title,
+            thumbnail: nextVideoInfo.thumbnail || prev.thumbnail,
+            uploader: nextVideoInfo.uploader || prev.uploader,
           };
-          if (window.electronAPI && data.videoInfo.title) {
+          if (window.electronAPI && nextVideoInfo.title) {
             window.electronAPI.updateDownloadHistory(prev.id, { 
-              title: data.videoInfo.title,
-              thumbnail: data.videoInfo.thumbnail,
-              uploader: data.videoInfo.uploader,
+              title: nextVideoInfo.title,
+              thumbnail: nextVideoInfo.thumbnail,
+              uploader: nextVideoInfo.uploader,
             });
           }
           return updated;
         });
       }
-      if (data.message) {
-        setPhaseMessages(prev => ({ ...prev, [data.phase]: data.message }));
+      const phase = data.phase;
+      if (data.message && phase) {
+        setPhaseMessages(prev => ({ ...prev, [phase]: data.message }));
       }
       if (data.summary) {
         setDownloadSummary(data.summary);
       }
     };
 
+    const handleQueueUpdate = (_event: unknown, data: { activeItem: QueueDownloadItem | null; queue: QueueDownloadItem[]; isActive: boolean }) => {
+      setQueueItems(data.queue || []);
+      setActiveQueueItem(data.activeItem || null);
+      loadWishlist();
+    };
+
     const cleanup1 = window.electronAPI.onStatusUpdate(handleUpdate);
-    const cleanup2 = (window.electronAPI as any).onProgressUpdate?.(handleProgressUpdate) || (() => {});
+    const cleanup2 = window.electronAPI.onProgressUpdate(handleProgressUpdate);
+    const cleanup3 = window.electronAPI.onQueueUpdate(handleQueueUpdate);
     
     return () => {
       cleanup1();
       cleanup2();
+      cleanup3();
     };
-  }, [isElectronAPIAvailable, parseOutput]);
+  }, [isElectronAPIAvailable, parseOutput, currentDownload, activeQueueItem, downloadPreset]);
+
+  const removeQueueItem = async (queueItemId: string) => {
+    if (!window.electronAPI?.removeQueueItem) return;
+    try {
+      const result = await window.electronAPI.removeQueueItem(queueItemId);
+      setQueueItems(result.queue || []);
+      setActiveQueueItem(result.activeItem || null);
+    } catch (err) {
+      console.error('Error removing queue item:', err);
+    }
+  };
+
+  const addWishlistItem = async (inputUrl?: string) => {
+    const trimmed = (inputUrl ?? wishlistUrl).trim();
+    if (!trimmed || !window.electronAPI?.addWishlistItem) return;
+    const videoId = getYoutubeId(trimmed);
+    const now = new Date().toISOString();
+
+    const newItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      url: trimmed,
+      videoId: videoId || '',
+      title: videoId ? `YouTube Video (${videoId})` : trimmed,
+      thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : '/hanar-logo.png',
+      uploader: '',
+      status: 'wishlist' as const,
+      addedAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      const items = await window.electronAPI.addWishlistItem(newItem);
+      setWishlistItems(items);
+      setWishlistUrl('');
+      setWishlistMessage('Added to wishlist. Click Add to Queue when ready.');
+    } catch (err) {
+      console.error('Error adding wishlist item:', err);
+      setWishlistMessage(`Failed to add wishlist item: ${String(err)}`);
+    }
+  };
+
+  const queueWishlistItem = async (wishlistItemId: string) => {
+    if (!window.electronAPI?.queueDownload) return;
+    try {
+      const result = await window.electronAPI.queueDownload(wishlistItemId, {
+        outputDir: outputDir || undefined,
+        archiveFile: archiveFile || undefined,
+        downloadPreset
+      });
+      if (!result.queued) {
+        setWishlistMessage(result.message || 'Unable to queue item.');
+        return;
+      }
+      setWishlistMessage('Added to queue.');
+      loadQueueState();
+      loadWishlist();
+    } catch (err) {
+      console.error('Error queueing wishlist item:', err);
+      setWishlistMessage(`Failed to queue item: ${String(err)}`);
+    }
+  };
+
+  const removeWishlistItem = async (wishlistItemId: string) => {
+    if (!window.electronAPI?.removeWishlistItem) return;
+    try {
+      const items = await window.electronAPI.removeWishlistItem(wishlistItemId);
+      setWishlistItems(items);
+    } catch (err) {
+      console.error('Error removing wishlist item:', err);
+    }
+  };
+
+  const clearWishlist = async () => {
+    if (!window.electronAPI?.clearWishlist) return;
+    if (!confirm('Clear all wishlist items?')) return;
+    await window.electronAPI.clearWishlist();
+    setWishlistItems([]);
+  };
 
   const selectOutputDir = async () => {
     if (!isElectronAPIAvailable || !window.electronAPI) return;
@@ -331,75 +487,6 @@ function App() {
     }
   };
 
-  const updateCurrentDownload = useCallback((updates: Partial<DownloadHistoryItem>) => {
-    setCurrentDownload(prev => {
-      if (!prev) return null;
-      const updated = { ...prev, ...updates };
-      if (window.electronAPI) {
-        window.electronAPI.updateDownloadHistory(prev.id, updates);
-      }
-      return updated;
-    });
-  }, []);
-
-  const handleDownload = async () => {
-    if (!url || isDownloading) return;
-    
-    if (!isElectronAPIAvailable || !window.electronAPI) {
-      setStatus('ERROR: Cannot download - Electron API not available');
-      return;
-    }
-
-    setIsDownloading(true);
-    setCurrentPhase('preparing');
-    setProgressPercent(0);
-    setVideoInfo(null);
-    setDownloadSummary('');
-    setStatus('Download requested...');
-
-    const videoId = getYoutubeId(url);
-    
-    const downloadId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newDownload: DownloadHistoryItem = {
-      id: downloadId,
-      videoId: videoId || '',
-      url: url,
-      title: 'Loading...',
-      thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : '',
-      uploader: '',
-      status: 'downloading',
-      progress: 0,
-      preset: downloadPreset,
-      startedAt: new Date().toISOString(),
-    };
-    
-    setCurrentDownload(newDownload);
-    await window.electronAPI.addDownloadHistory(newDownload);
-    
-    if (videoId) {
-      setVideoInfo({
-        id: videoId,
-        title: 'Loading...',
-        thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-        uploader: '',
-      });
-    }
-
-    try {
-      await window.electronAPI.downloadVideo(url, {
-        outputDir: outputDir || undefined,
-        archiveFile: archiveFile || undefined,
-        downloadPreset: downloadPreset
-      } as any);
-    } catch (error) {
-      console.error('Error invoking downloadVideo:', error);
-      setStatus((prevStatus) => prevStatus + `\nERROR invoking download: ${error}`);
-      setCurrentPhase('error');
-      updateCurrentDownload({ status: 'failed', error: String(error) });
-      setIsDownloading(false);
-    }
-  }
-
   const handleCancelDownload = async () => {
     if (!isElectronAPIAvailable || !window.electronAPI) return;
 
@@ -413,6 +500,8 @@ function App() {
     // Always update UI regardless of backend response -- the user wants to cancel
     setStatus((prev) => prev + '\nDownload cancelled by user.');
     setCurrentPhase('idle');
+    setVideoProgressPercent(0);
+    setAudioProgressPercent(0);
     setPhaseMessages(prev => ({ ...prev, error: 'Download cancelled by user' }));
     
     // Update download history with cancelled status
@@ -429,6 +518,8 @@ function App() {
       setIsDownloading(false);
       setCurrentPhase('idle');
       setProgressPercent(0);
+      setVideoProgressPercent(0);
+      setAudioProgressPercent(0);
       setCurrentDownload(null);
       setHistoryRefreshKey(k => k + 1);
     }, 1000);
@@ -445,18 +536,18 @@ function App() {
         <div className="url-input-row">
           <input
             type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="Paste YouTube URL here..."
-            disabled={isDownloading || !isElectronAPIAvailable}
-            onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
+            value={wishlistUrl}
+            onChange={(e) => setWishlistUrl(e.target.value)}
+            placeholder="Paste YouTube URL to add to wishlist..."
+            disabled={!isElectronAPIAvailable}
+            onKeyDown={(e) => e.key === 'Enter' && addWishlistItem()}
           />
-          <button 
-            onClick={handleDownload} 
-            disabled={!url || isDownloading || !isElectronAPIAvailable}
+          <button
+            onClick={() => addWishlistItem()}
+            disabled={!wishlistUrl.trim() || !isElectronAPIAvailable}
             className="download-button"
           >
-            {isDownloading ? 'Downloading...' : 'Download'}
+            Add to Wishlist
           </button>
         </div>
         
@@ -473,10 +564,70 @@ function App() {
         </div>
       </div>
 
+      <div className="card flow-card">
+        <div className="flow-header">
+          <h4>Wishlist</h4>
+          <div className="flow-header-actions">
+            <span>{wishlistItems.length} saved</span>
+            {wishlistItems.length > 0 && <button className="danger" onClick={clearWishlist}>Clear</button>}
+          </div>
+        </div>
+        <p className="flow-subtext">{wishlistMessage}</p>
+        {wishlistItems.length === 0 ? (
+          <div className="queue-empty">No wishlist items yet.</div>
+        ) : (
+          <div className="flow-list">
+            {wishlistItems.map(item => {
+              const alreadyQueued = queueItems.some(q => q.wishlistItemId === item.id) || activeQueueItem?.wishlistItemId === item.id;
+              return (
+                <div key={item.id} className="flow-item">
+                  <div className="flow-item-label" title={item.url}>
+                    {item.url}
+                  </div>
+                  <div className="flow-item-actions">
+                    <button onClick={() => queueWishlistItem(item.id)} disabled={alreadyQueued || item.status === 'downloading'}>
+                      {alreadyQueued ? 'Queued' : 'Add to Queue'}
+                    </button>
+                    <button className="danger" onClick={() => removeWishlistItem(item.id)}>Remove</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {(isDownloading || currentPhase !== 'idle') && (
+        <div className="card stream-progress-card">
+          <div className="stream-progress-header">
+            <h4>Stream Progress</h4>
+            <span>{phaseMessages[currentPhase]}</span>
+          </div>
+          <div className="stream-progress-row">
+            <label>Video</label>
+            <div className="stream-progress-bar">
+              <div className="stream-progress-fill video" style={{ width: `${videoProgressPercent}%` }} />
+            </div>
+            <span>{Math.round(videoProgressPercent)}%</span>
+          </div>
+          <div className="stream-progress-row">
+            <label>Audio</label>
+            <div className="stream-progress-bar">
+              <div className="stream-progress-fill audio" style={{ width: `${audioProgressPercent}%` }} />
+            </div>
+            <span>{Math.round(audioProgressPercent)}%</span>
+          </div>
+          {downloadSummary && <div className="stream-progress-summary">{downloadSummary}</div>}
+        </div>
+      )}
+
       {/* Download History */}
       <DownloadHistory 
         currentDownload={currentDownload} 
         onCancelDownload={handleCancelDownload}
+        queueItems={queueItems}
+        activeQueueItem={activeQueueItem}
+        onRemoveQueueItem={removeQueueItem}
         key={historyRefreshKey}
       />
     </div>

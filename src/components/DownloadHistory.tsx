@@ -6,9 +6,10 @@ type FilterType = 'all' | 'completed' | 'failed';
 
 interface DownloadHistoryProps {
   currentDownload: DownloadHistoryItem | null;
+  onCancelDownload?: () => void;
 }
 
-export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownload }) => {
+export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownload, onCancelDownload }) => {
   const [history, setHistory] = useState<DownloadHistoryItem[]>([]);
   const [filter, setFilter] = useState<FilterType>('all');
   const [isLoading, setIsLoading] = useState(true);
@@ -20,7 +21,7 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
 
   // Refresh history when current download changes
   useEffect(() => {
-    if (currentDownload?.status === 'completed' || currentDownload?.status === 'failed') {
+    if (currentDownload?.status === 'completed' || currentDownload?.status === 'failed' || currentDownload?.status === 'cancelled') {
       loadHistory();
     }
   }, [currentDownload?.status]);
@@ -58,8 +59,8 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
   // Combine current download with history for display
   const displayItems: DownloadHistoryItem[] = [];
   
-  // Add current download at the top if it's active
-  if (currentDownload && (currentDownload.status === 'downloading' || currentDownload.status === 'converting')) {
+  // Add current download at the top if it's active or just cancelled
+  if (currentDownload && (currentDownload.status === 'downloading' || currentDownload.status === 'converting' || currentDownload.status === 'cancelled')) {
     displayItems.push(currentDownload);
   }
   
@@ -79,6 +80,8 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
         return '✅';
       case 'failed':
         return '❌';
+      case 'cancelled':
+        return '🚫';
       default:
         return '⏳';
     }
@@ -93,6 +96,8 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
         return 'status-completed';
       case 'failed':
         return 'status-failed';
+      case 'cancelled':
+        return 'status-cancelled';
       default:
         return '';
     }
@@ -208,11 +213,25 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
                 {/* Progress bar for active downloads */}
                 {(item.status === 'downloading' || item.status === 'converting') && (
                   <div className="history-progress-container">
-                    <div className="history-progress-bar">
-                      <div 
-                        className="history-progress-fill" 
-                        style={{ width: `${item.progress}%` }}
-                      />
+                    <div className="history-progress-row">
+                      <div className="history-progress-bar">
+                        <div 
+                          className="history-progress-fill" 
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                      {onCancelDownload && (
+                        <button
+                          className="history-cancel-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCancelDownload();
+                          }}
+                          title="Cancel download"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                     <div className="history-progress-text">
                       {item.progress.toFixed(0)}%
@@ -225,6 +244,11 @@ export const DownloadHistory: React.FC<DownloadHistoryProps> = ({ currentDownloa
                 {/* Error message for failed downloads */}
                 {item.status === 'failed' && item.error && (
                   <div className="history-error">{item.error}</div>
+                )}
+
+                {/* Cancelled message */}
+                {item.status === 'cancelled' && (
+                  <div className="history-cancelled">Download cancelled</div>
                 )}
               </div>
             </div>

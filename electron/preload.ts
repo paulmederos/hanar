@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return ipcRenderer.invoke('download-video', url, options)
   },
   
+  // Cancel active download
+  cancelDownload: () => {
+    console.log('Preload: cancelDownload called')
+    return ipcRenderer.invoke('cancel-download')
+  },
+
   // Status update registration
   onStatusUpdate: (callback: (event: any, message: string) => void) => {
     console.log('Preload: onStatusUpdate listener being registered')

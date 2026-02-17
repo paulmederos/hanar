@@ -400,6 +400,40 @@ function App() {
     }
   }
 
+  const handleCancelDownload = async () => {
+    if (!isElectronAPIAvailable || !window.electronAPI) return;
+
+    // Tell the backend to kill any active processes (best-effort)
+    try {
+      await window.electronAPI.cancelDownload();
+    } catch (error) {
+      console.error('Error sending cancel to backend:', error);
+    }
+
+    // Always update UI regardless of backend response -- the user wants to cancel
+    setStatus((prev) => prev + '\nDownload cancelled by user.');
+    setCurrentPhase('idle');
+    setPhaseMessages(prev => ({ ...prev, error: 'Download cancelled by user' }));
+    
+    // Update download history with cancelled status
+    setCurrentDownload(prev => {
+      if (!prev) return null;
+      if (window.electronAPI) {
+        window.electronAPI.updateDownloadHistory(prev.id, { status: 'cancelled' });
+      }
+      return { ...prev, status: 'cancelled' as const };
+    });
+
+    // Reset UI state after a brief moment so the user sees the transition
+    setTimeout(() => {
+      setIsDownloading(false);
+      setCurrentPhase('idle');
+      setProgressPercent(0);
+      setCurrentDownload(null);
+      setHistoryRefreshKey(k => k + 1);
+    }, 1000);
+  };
+
   // Clear logs
   const clearLogs = () => setStatus('Logs cleared.');
 
@@ -442,6 +476,7 @@ function App() {
       {/* Download History */}
       <DownloadHistory 
         currentDownload={currentDownload} 
+        onCancelDownload={handleCancelDownload}
         key={historyRefreshKey}
       />
     </div>

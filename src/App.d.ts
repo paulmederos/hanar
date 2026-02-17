@@ -2,6 +2,7 @@ import type { DownloadHistoryItem, AppSettings } from './types';
 
 interface ElectronAPI {
   downloadVideo: (url: string, options?: { outputDir?: string; archiveFile?: string; downloadPreset?: string }) => Promise<unknown>;
+  cancelDownload: () => Promise<{ success: boolean; message: string }>;
   onStatusUpdate: (callback: (event: any, message: string) => void) => () => void;
   onProgressUpdate: (callback: (event: any, data: any) => void) => () => void;
   selectDirectory: (title?: string) => Promise<string | null>;

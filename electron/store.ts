@@ -17,7 +17,7 @@ export interface DownloadHistoryItem {
   title: string;
   thumbnail: string;
   uploader: string;
-  status: 'downloading' | 'converting' | 'completed' | 'failed';
+  status: 'downloading' | 'converting' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   eta?: string;
   speed?: string;

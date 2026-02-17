@@ -156,6 +156,11 @@
   border-color: rgba(220, 53, 69, 0.2);
 }
 
+.history-item.status-cancelled {
+  border-color: rgba(255, 193, 7, 0.2);
+  opacity: 0.7;
+}
+
 .history-thumbnail {
   position: relative;
   width: 120px;
@@ -229,8 +234,43 @@
   margin-top: 8px;
 }
 
+.history-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-cancel-btn {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.history-cancel-btn:hover {
+  background: rgba(220, 53, 69, 0.35);
+  border-color: rgba(220, 53, 69, 0.6);
+  color: #ff6b6b;
+  transform: scale(1.1);
+}
+
+.history-cancel-btn:active {
+  transform: scale(0.95);
+}
+
 .history-progress-bar {
-  width: 100%;
+  flex: 1;
   height: 6px;
   background: rgba(25, 20, 40, 0.6);
   border-radius: 3px;
@@ -294,6 +334,17 @@
   background: rgba(220, 53, 69, 0.1);
   border-radius: 4px;
   border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+/* Cancelled message */
+.history-cancelled {
+  font-size: 11px;
+  color: #ffc107;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 193, 7, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 193, 7, 0.15);
 }
 
 /* Responsive adjustments */

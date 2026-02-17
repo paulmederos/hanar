@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, ChildProcess } from 'node:child_process'
 import { 
   loadSettings, 
   updateSetting, 
@@ -11,6 +11,11 @@ import {
   clearDownloadHistory,
   DownloadHistoryItem
 } from './store'
+
+// Track active download processes for cancellation
+let activeYtDlpProcess: ChildProcess | null = null;
+let activeFfmpegProcess: ChildProcess | null = null;
+let isDownloadCancelled = false;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -189,6 +194,46 @@ ipcMain.handle('open-external', async (_event, url: string) => {
   }
 });
 
+// Cancel active download
+ipcMain.handle('cancel-download', async () => {
+  console.log('Main: cancel-download called');
+  
+  isDownloadCancelled = true;
+
+  // Kill ffmpeg first if it's running (it's the later stage)
+  if (activeFfmpegProcess) {
+    try {
+      // On Windows, use taskkill to ensure the process tree is killed
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(activeFfmpegProcess.pid), '/f', '/t']);
+      } else {
+        activeFfmpegProcess.kill('SIGTERM');
+      }
+      console.log('Killed ffmpeg process');
+    } catch (err) {
+      console.error('Error killing ffmpeg process:', err);
+    }
+    activeFfmpegProcess = null;
+  }
+
+  // Kill yt-dlp process
+  if (activeYtDlpProcess) {
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(activeYtDlpProcess.pid), '/f', '/t']);
+      } else {
+        activeYtDlpProcess.kill('SIGTERM');
+      }
+      console.log('Killed yt-dlp process');
+    } catch (err) {
+      console.error('Error killing yt-dlp process:', err);
+    }
+    activeYtDlpProcess = null;
+  }
+
+  return { success: true, message: 'Download cancelled' };
+});
+
 // Modify the download-video handler to accept directory options
 ipcMain.handle('download-video', async (event, url: string, options: { outputDir?: string, archiveFile?: string, downloadPreset?: string } = {}) => {
   console.log(`Received download request for: ${url} with options:`, options);
@@ -291,6 +336,9 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
 
   webContents.send('download-status', 'Starting yt-dlp process...')
 
+  // Reset cancellation flag
+  isDownloadCancelled = false;
+
   // Variables to track download state
   let currentPhase: 'preparing' | 'metadata' | 'thumbnail' | 'video' | 'audio' | 'merging' | 'converting' | 'complete' | 'error' = 'preparing';
   let videoTitle = '';
@@ -303,6 +351,7 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
   try {
     const ytDlpPath = 'yt-dlp' // Assume yt-dlp is in PATH
     const child = spawn(ytDlpPath, args);
+    activeYtDlpProcess = child;
 
     webContents.send('download-status', `Executing: ${ytDlpPath} ${args.join(' ')}`);
 
@@ -455,6 +504,19 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
 
     child.on('close', async (code) => {
       console.log(`yt-dlp process exited with code ${code}`);
+      activeYtDlpProcess = null;
+
+      // Check if download was cancelled
+      if (isDownloadCancelled) {
+        webContents.send('download-status', '\nDownload cancelled by user.');
+        currentPhase = 'error';
+        webContents.send('download-progress', {
+          phase: 'error',
+          message: 'Download cancelled'
+        });
+        return;
+      }
+
       if (code === 0) {
         webContents.send('download-status', '\nDownload successful!');
         
@@ -488,6 +550,7 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
           webContents.send('download-status', `Converting: ${path.basename(inputPath)}`);
           
           const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+          activeFfmpegProcess = ffmpegProcess;
           
           ffmpegProcess.stderr.on('data', (data) => {
             const output = data.toString();
@@ -503,6 +566,28 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
           });
           
           ffmpegProcess.on('close', (ffmpegCode) => {
+            activeFfmpegProcess = null;
+
+            // Check if conversion was cancelled
+            if (isDownloadCancelled) {
+              // Clean up partial converted file
+              try {
+                const fs = require('fs');
+                if (fs.existsSync(outputPath)) {
+                  fs.unlinkSync(outputPath);
+                }
+              } catch (cleanupErr) {
+                console.error('Error cleaning up partial conversion file:', cleanupErr);
+              }
+              webContents.send('download-status', '\nConversion cancelled by user.');
+              currentPhase = 'error';
+              webContents.send('download-progress', {
+                phase: 'error',
+                message: 'Download cancelled'
+              });
+              return;
+            }
+
             if (ffmpegCode === 0) {
               // Conversion successful - replace original with converted file
               try {
@@ -579,6 +664,34 @@ ipcMain.handle('download-video', async (event, url: string, options: { outputDir
       phase: 'error',
       message: `Could not execute download: ${error}`
     });
+  }
+});
+
+// Clean up any active download processes on app quit
+app.on('before-quit', () => {
+  if (activeYtDlpProcess) {
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(activeYtDlpProcess.pid), '/f', '/t']);
+      } else {
+        activeYtDlpProcess.kill('SIGTERM');
+      }
+    } catch (err) {
+      console.error('Error killing yt-dlp on quit:', err);
+    }
+    activeYtDlpProcess = null;
+  }
+  if (activeFfmpegProcess) {
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(activeFfmpegProcess.pid), '/f', '/t']);
+      } else {
+        activeFfmpegProcess.kill('SIGTERM');
+      }
+    } catch (err) {
+      console.error('Error killing ffmpeg on quit:', err);
+    }
+    activeFfmpegProcess = null;
   }
 });
 

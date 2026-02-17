@@ -29,7 +29,7 @@ interface DownloadHistoryItem {
   title: string;
   thumbnail: string;
   uploader: string;
-  status: 'downloading' | 'converting' | 'completed' | 'failed';
+  status: 'downloading' | 'converting' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   eta?: string;
   speed?: string;
@@ -52,6 +52,7 @@ interface AppSettings {
 interface Window {
   electronAPI: {
     downloadVideo: (url: string, options?: { outputDir?: string; archiveFile?: string; downloadPreset?: string }) => Promise<unknown>;
+    cancelDownload: () => Promise<{ success: boolean; message: string }>;
     onStatusUpdate: (callback: (event: any, message: string) => void) => () => void;
     onProgressUpdate: (callback: (event: any, data: any) => void) => () => void;
     selectDirectory: (title?: string) => Promise<string | null>;
